@@ -147,7 +147,7 @@ android {
         variant.outputs.configureEach { output ->
             def abi = output.getFilter('ABI')
             if (abi == null) abi = 'universal'
-            outputFileName = "Finegram-${APP_VERSION_NAME_FINEGRAM}-TG-${APP_VERSION_NAME}-${abi}.apk"
+            outputFileName = "VEDAgram-${APP_VERSION_NAME_FINEGRAM}-TG-${APP_VERSION_NAME}-${abi}.apk"
             output.versionCodeOverride = defaultConfig.versionCode * 10
         }
     }
