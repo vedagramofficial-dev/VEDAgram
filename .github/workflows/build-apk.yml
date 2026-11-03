@@ -3,47 +3,56 @@ name: Build VEDAgram APK
 on:
   workflow_dispatch:
   push:
-    branches:
-      - feature/vedagram-branding
+    branches: [feature/vedagram-branding]
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Create private.properties
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android toolchain
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Configure test build
+        env:
+          TG_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TG_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        shell: bash
         run: |
-          cat > private.properties <<EOF
-          TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
-          KEYSTORE_PATH=../finegram-debug.jks
-          KEYSTORE_PASSWORD=finegram
-          KEY_ALIAS=finegram
-          KEY_PASSWORD=finegram
-          EOF
-
-      - name: Build APK
-        run: ./gradlew :TMessagesProj_AppStandalone:assembleAfatStandalone --no-daemon
-
-      - name: Upload APK artifact
+          set -euo pipefail
+          chmod +x gradlew
+          echo "FINEGRAM_BUILD_PYTHON=$(command -v python)" >> "$GITHUB_ENV"
+          if [[ -z "$TG_ID" || -z "$TG_HASH" ]]; then
+            echo '::warning::Missing Telegram API credentials. Compilation test only; Telegram login is not validated.'
+          fi
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/vedagram-test.jks" -storepass android -keypass android -alias vedagram-test -keyalg RSA -keysize 2048 -validity 30 -dname 'CN=VEDAgram Test'
+          {
+            printf 'TELEGRAM_API_ID=%s\n' "${TG_ID:-0}"
+            printf 'TELEGRAM_API_HASH=%s\n' "$TG_HASH"
+            printf 'KEYSTORE_PATH=%s\n' "$RUNNER_TEMP/vedagram-test.jks"
+            printf 'KEYSTORE_PASSWORD=android\nKEY_ALIAS=vedagram-test\nKEY_PASSWORD=android\n'
+          } > private.properties
+      - name: Build test APK
+        run: ./gradlew :TMessagesProj_AppStandalone:assembleAfatDebug --no-daemon --stacktrace -Dorg.gradle.jvmargs='-Xmx4g -XX:MaxMetaspaceSize=1g'
+      - name: Upload test APK
         uses: actions/upload-artifact@v4
         with:
-          name: vedagram-apk
-          path: |
-            TMessagesProj_AppStandalone/build/outputs/apk/**/*.apk
-            dist/*.apk
+          name: vedagram-test-apk
+          path: TMessagesProj_AppStandalone/build/outputs/apk/afat/debug/*.apk
           if-no-files-found: error
+      - name: Remove temporary credentials
+        if: always()
+        run: rm -f private.properties "$RUNNER_TEMP/vedagram-test.jks"
